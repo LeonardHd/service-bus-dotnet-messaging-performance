@@ -15,12 +15,14 @@ namespace ServiceBusThroughputTestLib
     using System.Threading;
     using System.Threading.Tasks;
     using Azure.Messaging.ServiceBus;
+    using Azure.Identity;
     using ServiceBusThroughputTest.Common;
     using ServiceBusThroughputTestLib.Extensions;
 
     public class Receiver
     {
         string connectionString;
+        string serviceBusNamespace;
         string queueName;
         int prefetchCount = 0;
         int batchSize = 1;
@@ -30,9 +32,30 @@ namespace ServiceBusThroughputTestLib
         int callIntervalMS = 1000;
         bool isReceiveAndDelete = false;
 
+        // Constructor for connection string (backwards compatibility)
         public Receiver(string connectionString, string queueName, int prefetchCount, int batchSize, int concurrentCalls, int receiversCount, int callIntervalMS, bool isReceiveAndDelete = false, ILogger logger = null)
         {
             this.connectionString = connectionString;
+            this.queueName = queueName;
+            this.prefetchCount = prefetchCount;
+            this.concurrentCalls = concurrentCalls;
+            this.receiversCount = receiversCount;
+            this.batchSize = batchSize;
+            this.callIntervalMS = callIntervalMS;
+            this.isReceiveAndDelete = isReceiveAndDelete;
+            this.logger = logger;
+        }
+
+        // Static factory method for Azure Identity
+        public static Receiver CreateWithAzureIdentity(string serviceBusNamespace, string queueName, int prefetchCount, int batchSize, int concurrentCalls, int receiversCount, int callIntervalMS, bool isReceiveAndDelete = false, ILogger logger = null)
+        {
+            return new Receiver(serviceBusNamespace, queueName, prefetchCount, batchSize, concurrentCalls, receiversCount, callIntervalMS, isReceiveAndDelete, logger, true);
+        }
+
+        // Private constructor for Azure Identity
+        private Receiver(string serviceBusNamespace, string queueName, int prefetchCount, int batchSize, int concurrentCalls, int receiversCount, int callIntervalMS, bool isReceiveAndDelete, ILogger logger, bool useAzureIdentity)
+        {
+            this.serviceBusNamespace = serviceBusNamespace;
             this.queueName = queueName;
             this.prefetchCount = prefetchCount;
             this.concurrentCalls = concurrentCalls;
@@ -65,7 +88,15 @@ namespace ServiceBusThroughputTestLib
                 
                 for (var i = 0; i < this.receiversCount; i++)
                 {
-                    clients[i] = new ServiceBusClient(connectionString);
+                    // Create ServiceBusClient based on authentication method
+                    if (!string.IsNullOrEmpty(this.connectionString))
+                    {
+                        clients[i] = new ServiceBusClient(connectionString);
+                    }
+                    else
+                    {
+                        clients[i] = new ServiceBusClient(serviceBusNamespace, new DefaultAzureCredential());
+                    }
 
                     ServiceBusReceiver receiver;
                     if (queueName.Contains(":"))

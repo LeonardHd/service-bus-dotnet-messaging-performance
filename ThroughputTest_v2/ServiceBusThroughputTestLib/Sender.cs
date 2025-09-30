@@ -15,12 +15,14 @@ namespace ServiceBusThroughputTestLib
     using System.Threading;
     using System.Threading.Tasks;
     using Azure.Messaging.ServiceBus;
+    using Azure.Identity;
     using Extensions;
     using ServiceBusThroughputTest.Common;
 
     public class Sender
     {
         string connectionString;
+        string serviceBusNamespace;
         string queueName;
 
         int payloadSize = 600;
@@ -30,9 +32,29 @@ namespace ServiceBusThroughputTestLib
         int concurrentCalls = 10;
         ILogger logger = null;
 
+        // Constructor for connection string (backwards compatibility)
         public Sender(string connectionString, string queueName, int payloadSize, int batchSize, int callIntervalMS, int concurrentCalls, int sendersCount, ILogger logger = null)
         {
             this.connectionString = connectionString;
+            this.queueName = queueName;
+            this.payloadSize = payloadSize;
+            this.batchSize = batchSize;
+            this.callIntervalMS = callIntervalMS;
+            this.concurrentCalls = concurrentCalls;
+            this.sendersCount = sendersCount;
+            this.logger = logger;
+        }
+
+        // Static factory method for Azure Identity
+        public static Sender CreateWithAzureIdentity(string serviceBusNamespace, string queueName, int payloadSize, int batchSize, int callIntervalMS, int concurrentCalls, int sendersCount, ILogger logger = null)
+        {
+            return new Sender(serviceBusNamespace, queueName, payloadSize, batchSize, callIntervalMS, concurrentCalls, sendersCount, logger, true);
+        }
+
+        // Private constructor for Azure Identity
+        private Sender(string serviceBusNamespace, string queueName, int payloadSize, int batchSize, int callIntervalMS, int concurrentCalls, int sendersCount, ILogger logger, bool useAzureIdentity)
+        {
+            this.serviceBusNamespace = serviceBusNamespace;
             this.queueName = queueName;
             this.payloadSize = payloadSize;
             this.batchSize = batchSize;
@@ -52,7 +74,15 @@ namespace ServiceBusThroughputTestLib
 
                 for (var i = 0; i < this.sendersCount; i++)
                 {
-                    clients[i] = new ServiceBusClient(connectionString);
+                    // Create ServiceBusClient based on authentication method
+                    if (!string.IsNullOrEmpty(this.connectionString))
+                    {
+                        clients[i] = new ServiceBusClient(connectionString);
+                    }
+                    else
+                    {
+                        clients[i] = new ServiceBusClient(serviceBusNamespace, new DefaultAzureCredential());
+                    }
 
                     senders[i] = clients[i].CreateSender(queueName);
                     sendTasks[i] = Start(senders[i], cancellationToken);

@@ -36,6 +36,18 @@ namespace ServiceBusThroughputTest
 
         static void StartSendReceives(Settings settings)
         {
+            // Validate that either connection string or namespace is provided
+            if (string.IsNullOrEmpty(settings.ConnectionString) && string.IsNullOrEmpty(settings.ServiceBusNamespace))
+            {
+                Console.WriteLine("Error: Either --connection-string (-C) or --namespace (-N) must be provided.");
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(settings.ConnectionString) && !string.IsNullOrEmpty(settings.ServiceBusNamespace))
+            {
+                Console.WriteLine("Warning: Both connection string and namespace provided. Using connection string for backwards compatibility.");
+            }
+
             CancellationTokenSource cts = new CancellationTokenSource();
 
             var cancelTask = Task.Run(() =>
@@ -81,7 +93,18 @@ namespace ServiceBusThroughputTest
             {
                 Metrics receiveMetrics = new Metrics(cts.Token, false, settings.MetricsDisplayFrequency, metricsSamplesPerDisplayIntervalReceiver);
 
-                Receiver receiver = new Receiver(settings.ConnectionString, settings.QueueName, settings.PrefetchCount, settings.ReceiveBatchSize, settings.MaxInflightReceives, settings.ReceiverCount, settings.ReceiveCallIntervalMs, !settings.IsPeekLock, receiveMetrics);
+                Receiver receiver;
+                if (!string.IsNullOrEmpty(settings.ConnectionString))
+                {
+                    // Use connection string (backwards compatibility)
+                    receiver = new Receiver(settings.ConnectionString, settings.QueueName, settings.PrefetchCount, settings.ReceiveBatchSize, settings.MaxInflightReceives, settings.ReceiverCount, settings.ReceiveCallIntervalMs, !settings.IsPeekLock, receiveMetrics);
+                }
+                else
+                {
+                    // Use Azure Identity
+                    receiver = Receiver.CreateWithAzureIdentity(settings.ServiceBusNamespace, settings.QueueName, settings.PrefetchCount, settings.ReceiveBatchSize, settings.MaxInflightReceives, settings.ReceiverCount, settings.ReceiveCallIntervalMs, !settings.IsPeekLock, receiveMetrics);
+                }
+                
                 receiveMetrics.OnMetricsDisplay += (s, e) => Metrics_OnMetricsDisplay(s, e, settings, ref sendTotal, ref receiveTotal);
 
                 sndRxTasks.Add(receiver.Run(cts.Token));
@@ -90,7 +113,18 @@ namespace ServiceBusThroughputTest
             if (settings.SenderCount > 0)
             {
                 Metrics sendMetrics = new Metrics(cts.Token, true, settings.MetricsDisplayFrequency, metricsSamplesPerDisplayIntervalSender);
-                Sender sender = new Sender(settings.ConnectionString, settings.QueueName, settings.PayloadSizeInBytes, settings.SendBatchSize, settings.SendCallIntervalMs, settings.MaxInflightSends, settings.SenderCount, sendMetrics);
+                
+                Sender sender;
+                if (!string.IsNullOrEmpty(settings.ConnectionString))
+                {
+                    // Use connection string (backwards compatibility)
+                    sender = new Sender(settings.ConnectionString, settings.QueueName, settings.PayloadSizeInBytes, settings.SendBatchSize, settings.SendCallIntervalMs, settings.MaxInflightSends, settings.SenderCount, sendMetrics);
+                }
+                else
+                {
+                    // Use Azure Identity
+                    sender = Sender.CreateWithAzureIdentity(settings.ServiceBusNamespace, settings.QueueName, settings.PayloadSizeInBytes, settings.SendBatchSize, settings.SendCallIntervalMs, settings.MaxInflightSends, settings.SenderCount, sendMetrics);
+                }
 
                 sendMetrics.OnMetricsDisplay += (s, e) => Metrics_OnMetricsDisplay(s, e, settings, ref sendTotal, ref receiveTotal);
 
@@ -220,7 +254,10 @@ namespace ServiceBusThroughputTest
 
     class Settings
     {
-        [Option('C', "connection-string", Required = true, HelpText = "Connection string")]
+        [Option('N', "namespace", Required = true, HelpText = "Service Bus namespace (e.g., 'myservicebus.servicebus.windows.net')")]
+        public string ServiceBusNamespace { get; set; }
+
+        [Option('C', "connection-string", Required = false, HelpText = "Connection string (alternative to namespace, for backwards compatibility)")]
         public string ConnectionString { get; set; }
 
         [Option('S', "entity-path", Required = false, HelpText = "Entity path. Queue or topic. For Topic/Subscription, provide in this format - {topic}:{subscription}")]
@@ -265,6 +302,8 @@ namespace ServiceBusThroughputTest
         public void PrintSettings()
         {
             Console.WriteLine("Settings:");
+            Console.WriteLine("{0}: {1}", "ServiceBusNamespace", this.ServiceBusNamespace);
+            Console.WriteLine("{0}: {1}", "ConnectionString", !string.IsNullOrEmpty(this.ConnectionString) ? "[REDACTED]" : "Not provided");
             Console.WriteLine("{0}: {1}", "SendPaths", this.QueueName);
             Console.WriteLine("{0}: {1}", "PayloadSizeInBytes", this.PayloadSizeInBytes);
             Console.WriteLine("{0}: {1}", "SenderCount", this.SenderCount);
@@ -287,8 +326,9 @@ namespace ServiceBusThroughputTest
         {
             get
             {
-                yield return new Example("queue scenario", new Settings { ConnectionString = "{Connection-String}", QueueName = "{Queue-Name}" });
-                yield return new Example("topic scenario", new Settings { ConnectionString = "{Connection-String}", QueueName = "{Topic-Name}:{Subsription-Name}"});
+                yield return new Example("queue scenario with Azure Identity", new Settings { ServiceBusNamespace = "myservicebus.servicebus.windows.net", QueueName = "myqueue" });
+                yield return new Example("topic scenario with Azure Identity", new Settings { ServiceBusNamespace = "myservicebus.servicebus.windows.net", QueueName = "mytopic:mysubscription"});
+                yield return new Example("queue scenario with connection string", new Settings { ConnectionString = "{Connection-String}", QueueName = "{Queue-Name}" });
             }
         }
     }
